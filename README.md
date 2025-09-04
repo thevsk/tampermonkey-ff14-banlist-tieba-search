@@ -18,9 +18,9 @@
 第三个人的查询结果：...
 鉴于你可能无法访问贴吧的查询结果页面，我直接提供你需要的结果的位置：
 结果1：body > div.wrap1 > div > div.s_container.clearfix > div.s_main > div.s_post_list > div:nth-child(1) > span > a
-结果1的跳转url：https://tieba.baidu.com{a\[href\]}
+结果1的跳转url：https://tieba.baidu.com{a[href]}
 结果2：body > div.wrap1 > div > div.s_container.clearfix > div.s_main > div.s_post_list > div:nth-child(2) > span > a
-结果2的跳转url：https://tieba.baidu.com{a\[href\]}
+结果2的跳转url：https://tieba.baidu.com{a[href]}
 结果3：....
 ```
 
