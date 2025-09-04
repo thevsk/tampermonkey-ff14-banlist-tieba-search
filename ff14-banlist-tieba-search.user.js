@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         FF14封号名单贴吧查询工具
-// @namespace    http://tampermonkey.net/
-// @version      1.5
-// @description  自动查询封号名单中角色在贴吧的相关信息，带有可拖动UI和自定义查询功能
+// @name         FF14封号名单贴吧查询工具增强版
+// @namespace    https://github.com/thevsk/tampermonkey-ff14-banlist-tieba-search
+// @version      1.6
+// @description  自动查询封号名单中角色在贴吧的相关信息，带有自定义延迟和查询格式功能
 // @author       thevsk
 // @match        https://actff1.web.sdo.com/project/20210621ffviolation/index.html*
 // @grant        GM_xmlhttpRequest
@@ -108,14 +108,6 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-
-        #tieba-query-results-close {
-            background: none;
-            border: none;
-            color: white;
-            cursor: pointer;
-            font-size: 16px;
         }
 
         #tieba-query-results {
@@ -224,13 +216,30 @@
             padding: 15px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
             z-index: 10001;
-            width: 400px;
+            width: 450px;
             color: black;
         }
 
         #settings-modal h3 {
             margin-top: 0;
             color: #4e6ef2;
+        }
+
+        .settings-group {
+            margin-bottom: 15px;
+        }
+
+        .settings-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .settings-group input {
+            width: 100%;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
         }
 
         #query-format {
@@ -272,9 +281,12 @@
         }
     `);
 
-    // 工具函数：生成随机延迟(10-20秒)
+    // 工具函数：生成随机延迟
     function getRandomDelay() {
-        return Math.floor(Math.random() * 10000) + 10000;
+        const minDelay = GM_getValue('minDelay', 10) * 1000; // 转换为毫秒
+        const maxDelay = GM_getValue('maxDelay', 20) * 1000; // 转换为毫秒
+
+        return Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
     }
 
     // 提取角色信息（名称、服务器、封号原因）
@@ -420,8 +432,22 @@
                     <li><code>{banReason}</code> - 封号原因</li>
                 </ul>
             </div>
-            <label for="query-format">查询格式:</label>
-            <input type="text" id="query-format" value="{nickname} {server}">
+
+            <div class="settings-group">
+                <label for="query-format">查询格式:</label>
+                <input type="text" id="query-format" value="{nickname}">
+            </div>
+
+            <div class="settings-group">
+                <label for="min-delay">最小延迟(秒):</label>
+                <input type="number" id="min-delay" min="1" max="60" value="10">
+            </div>
+
+            <div class="settings-group">
+                <label for="max-delay">最大延迟(秒):</label>
+                <input type="number" id="max-delay" min="1" max="60" value="20">
+            </div>
+
             <div id="settings-buttons">
                 <button id="settings-cancel" class="tieba-query-btn">取消</button>
                 <button id="settings-save" class="tieba-query-btn" style="background: #4e6ef2; color: white;">保存</button>
@@ -436,8 +462,13 @@
         document.body.appendChild(backdrop);
 
         // 加载保存的设置
-        const savedFormat = GM_getValue('queryFormat', '{nickname} {server}');
+        const savedFormat = GM_getValue('queryFormat', '{nickname}');
+        const minDelay = GM_getValue('minDelay', 10);
+        const maxDelay = GM_getValue('maxDelay', 20);
+
         document.getElementById('query-format').value = savedFormat;
+        document.getElementById('min-delay').value = minDelay;
+        document.getElementById('max-delay').value = maxDelay;
 
         // 添加事件监听
         document.getElementById('settings-cancel').addEventListener('click', function() {
@@ -447,7 +478,21 @@
 
         document.getElementById('settings-save').addEventListener('click', function() {
             const format = document.getElementById('query-format').value;
+            const minDelay = parseInt(document.getElementById('min-delay').value) || 10;
+            const maxDelay = parseInt(document.getElementById('max-delay').value) || 20;
+
+            // 验证延迟范围
+            if (minDelay < 1) minDelay = 1;
+            if (maxDelay > 60) maxDelay = 60;
+            if (minDelay > maxDelay) {
+                alert('最小延迟不能大于最大延迟');
+                return;
+            }
+
             GM_setValue('queryFormat', format);
+            GM_setValue('minDelay', minDelay);
+            GM_setValue('maxDelay', maxDelay);
+
             document.body.removeChild(modal);
             document.body.removeChild(backdrop);
         });
@@ -525,14 +570,6 @@
         resultsHeader.textContent = '查询结果';
         resultsHeader.addEventListener('mousedown', initDrag);
 
-        const closeBtn = document.createElement('button');
-        closeBtn.id = 'tieba-query-results-close';
-        closeBtn.textContent = '×';
-        closeBtn.addEventListener('click', function() {
-            resultsContainer.style.display = 'none';
-        });
-
-        resultsHeader.appendChild(closeBtn);
         resultsContainer.appendChild(resultsHeader);
 
         const results = document.createElement('div');
@@ -609,7 +646,7 @@
         // 查询处理函数
         async function startQueryProcess() {
             // 获取查询格式
-            const queryFormat = GM_getValue('queryFormat', '{nickname} {server}');
+            const queryFormat = GM_getValue('queryFormat', '{nickname}');
 
             for (; currentIndex < characters.length; currentIndex++) {
                 if (!isQuerying) break;
