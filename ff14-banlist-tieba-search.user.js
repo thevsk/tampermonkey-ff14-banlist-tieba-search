@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         FF14封号名单贴吧查询工具增强版
+// @name         FF14封号名单贴吧查询工具
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  自动查询封号名单中角色在贴吧的相关信息，带有独立结果显示区域
+// @version      1.5
+// @description  自动查询封号名单中角色在贴吧的相关信息，带有可拖动UI和自定义查询功能
 // @author       thevsk
 // @match        https://actff1.web.sdo.com/project/20210621ffviolation/index.html*
 // @grant        GM_xmlhttpRequest
@@ -15,30 +15,27 @@
 (function() {
     'use strict';
 
-    // 代码生成自deepseek
     // 添加自定义样式
     GM_addStyle(`
         #tieba-query-panel {
             position: fixed;
-            top: 10px;
-            right: 10px;
+            top: 0;
+            left: 0;
+            right: 0;
             z-index: 10000;
             background: white;
-            border: 1px solid #ccc;
-            border-radius: 5px;
+            border-bottom: 1px solid #ccc;
             padding: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            min-width: 350px;
-            max-width: 500px;
-            max-height: 80vh;
-            overflow-y: auto;
             font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
         }
 
         #tieba-query-controls {
-            margin-bottom: 10px;
             display: flex;
             gap: 5px;
+            margin-bottom: 5px;
             flex-wrap: wrap;
         }
 
@@ -66,6 +63,11 @@
             color: #333;
         }
 
+        #tieba-query-settings {
+            background: #f0f0f0;
+            color: #333;
+        }
+
         .tieba-query-btn:disabled {
             background: #ccc;
             cursor: not-allowed;
@@ -73,14 +75,51 @@
 
         #tieba-query-status {
             font-size: 12px;
-            margin: 5px 0;
             color: #666;
             line-height: 1.4;
+            margin-bottom: 5px;
+        }
+
+        #tieba-query-results-container {
+            position: fixed;
+            top: 120px;
+            right: 10px;
+            width: 500px;
+            max-height: calc(100vh - 130px);
+            overflow: hidden;
+            background: white;
+            border: 2px solid #4e6ef2;
+            border-radius: 5px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            z-index: 9999;
+            resize: both;
+            min-width: 400px;
+            min-height: 300px;
+        }
+
+        #tieba-query-results-header {
+            background: #4e6ef2;
+            color: white;
+            padding: 5px 10px;
+            cursor: move;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #tieba-query-results-close {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
         }
 
         #tieba-query-results {
-            border-top: 1px solid #eee;
-            padding-top: 10px;
+            height: calc(100% - 30px);
+            overflow-y: auto;
+            padding: 10px;
         }
 
         .query-result-item {
@@ -159,6 +198,76 @@
             margin-top: 5px;
             font-size: 11px;
         }
+
+        .status-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .progress-info {
+            font-weight: bold;
+            color: #333;
+            margin-right: 10px;
+        }
+
+        #settings-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border: 2px solid #4e6ef2;
+            border-radius: 5px;
+            padding: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            z-index: 10001;
+            width: 400px;
+            color: black;
+        }
+
+        #settings-modal h3 {
+            margin-top: 0;
+            color: #4e6ef2;
+        }
+
+        #query-format {
+            width: 100%;
+            padding: 5px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+
+        #settings-tips {
+            background: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 3px;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+
+        #settings-tips ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+
+        #settings-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 5px;
+        }
+
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 10000;
+        }
     `);
 
     // 工具函数：生成随机延迟(10-20秒)
@@ -191,9 +300,14 @@
     }
 
     // 查询贴吧信息
-    function queryTiebaInfo(characterName, server) {
+    function queryTiebaInfo(characterName, server, queryFormat) {
         return new Promise((resolve) => {
-            const queryText = `${characterName}@${server}`;
+            // 使用自定义查询格式
+            const queryText = queryFormat
+                .replace(/{nickname}/g, characterName)
+                .replace(/{server}/g, server)
+                .replace(/{banReason}/g, "");
+
             const queryUrl = `https://tieba.baidu.com/f/search/res?ie=utf-8&kw=ff14&qw=${encodeURIComponent(queryText)}`;
 
             GM_xmlhttpRequest({
@@ -289,6 +403,54 @@
         resultsContainer.scrollTop = resultsContainer.scrollHeight;
     }
 
+    // 创建设置模态框
+    function createSettingsModal() {
+        const modal = document.createElement('div');
+        modal.id = 'settings-modal';
+
+        modal.innerHTML = `
+            <h3>查询设置</h3>
+            <div id="settings-tips">
+                <strong>可用变量:</strong>
+                <ul>
+                    <li><code>{nickname}</code> - 角色昵称</li>
+                    <li><code>{server}</code> - 服务器名称</li>
+                    <li><code>{banReason}</code> - 封号原因</li>
+                </ul>
+            </div>
+            <label for="query-format">查询格式:</label>
+            <input type="text" id="query-format" value="{nickname} {server}">
+            <div id="settings-buttons">
+                <button id="settings-cancel" class="tieba-query-btn">取消</button>
+                <button id="settings-save" class="tieba-query-btn" style="background: #4e6ef2; color: white;">保存</button>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // 添加背景遮罩
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        document.body.appendChild(backdrop);
+
+        // 加载保存的设置
+        const savedFormat = GM_getValue('queryFormat', '{nickname} {server}');
+        document.getElementById('query-format').value = savedFormat;
+
+        // 添加事件监听
+        document.getElementById('settings-cancel').addEventListener('click', function() {
+            document.body.removeChild(modal);
+            document.body.removeChild(backdrop);
+        });
+
+        document.getElementById('settings-save').addEventListener('click', function() {
+            const format = document.getElementById('query-format').value;
+            GM_setValue('queryFormat', format);
+            document.body.removeChild(modal);
+            document.body.removeChild(backdrop);
+        });
+    }
+
     // 创建查询控制面板
     function createControlPanel() {
         // 检查是否已存在面板
@@ -296,6 +458,7 @@
             return;
         }
 
+        // 创建顶部固定控制面板
         const panel = document.createElement('div');
         panel.id = 'tieba-query-panel';
 
@@ -319,24 +482,62 @@
         clearBtn.className = 'tieba-query-btn';
         clearBtn.textContent = '清除结果';
 
+        const settingsBtn = document.createElement('button');
+        settingsBtn.id = 'tieba-query-settings';
+        settingsBtn.className = 'tieba-query-btn';
+        settingsBtn.textContent = '设置';
+
         controls.appendChild(startBtn);
         controls.appendChild(pauseBtn);
         controls.appendChild(clearBtn);
+        controls.appendChild(settingsBtn);
 
-        // 创建状态显示
+        // 创建状态显示区域
+        const statusSection = document.createElement('div');
+        statusSection.className = 'status-section';
+
         const status = document.createElement('div');
         status.id = 'tieba-query-status';
         status.textContent = '就绪';
 
-        // 创建结果容器
+        const progress = document.createElement('div');
+        progress.id = 'tieba-query-progress';
+        progress.className = 'progress-info';
+        progress.textContent = '进度: 0/0';
+
+        statusSection.appendChild(status);
+        statusSection.appendChild(progress);
+
+        panel.appendChild(controls);
+        panel.appendChild(statusSection);
+
+        document.body.appendChild(panel);
+
+        // 创建独立的结果容器
+        const resultsContainer = document.createElement('div');
+        resultsContainer.id = 'tieba-query-results-container';
+
+        // 创建可拖动的标题栏
+        const resultsHeader = document.createElement('div');
+        resultsHeader.id = 'tieba-query-results-header';
+        resultsHeader.textContent = '查询结果';
+        resultsHeader.addEventListener('mousedown', initDrag);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.id = 'tieba-query-results-close';
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', function() {
+            resultsContainer.style.display = 'none';
+        });
+
+        resultsHeader.appendChild(closeBtn);
+        resultsContainer.appendChild(resultsHeader);
+
         const results = document.createElement('div');
         results.id = 'tieba-query-results';
 
-        panel.appendChild(controls);
-        panel.appendChild(status);
-        panel.appendChild(results);
-
-        document.body.appendChild(panel);
+        resultsContainer.appendChild(results);
+        document.body.appendChild(resultsContainer);
 
         // 添加事件监听
         let isQuerying = false;
@@ -344,15 +545,15 @@
         let characters = [];
         let queryTimeout = null;
 
+        // 设置按钮点击事件
+        settingsBtn.addEventListener('click', createSettingsModal);
+
         // 更新状态显示
         function updateStatus(text, isWaiting = false, nextCharacter = null) {
             status.innerHTML = text;
 
-            // 添加进度信息
-            const progress = document.createElement('div');
-            progress.className = 'query-progress';
+            // 更新进度信息
             progress.textContent = `进度: ${currentIndex}/${characters.length}`;
-            status.appendChild(progress);
 
             // 如果是等待状态，显示下一个查询的角色信息
             if (isWaiting && nextCharacter) {
@@ -405,6 +606,9 @@
 
         // 查询处理函数
         async function startQueryProcess() {
+            // 获取查询格式
+            const queryFormat = GM_getValue('queryFormat', '{nickname} {server}');
+
             for (; currentIndex < characters.length; currentIndex++) {
                 if (!isQuerying) break;
 
@@ -412,7 +616,7 @@
                 updateStatus(`查询中: ${character.name} (${character.server})`);
 
                 try {
-                    const result = await queryTiebaInfo(character.name, character.server);
+                    const result = await queryTiebaInfo(character.name, character.server, queryFormat);
                     addResultToPanel(result.characterName, result.server, character.reason, result.results);
                 } catch (error) {
                     console.error(`查询 ${character.name} 时出错:`, error);
@@ -446,6 +650,37 @@
             } else {
                 updateStatus(`已暂停，已查询 ${currentIndex}/${characters.length} 个角色`);
                 startBtn.textContent = '继续查询';
+            }
+        }
+
+        // 可拖动窗口功能
+        function initDrag(e) {
+            e.preventDefault();
+
+            const container = document.getElementById('tieba-query-results-container');
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+
+            document.onmouseup = closeDragElement;
+            document.onmousemove = elementDrag;
+
+            function elementDrag(e) {
+                e.preventDefault();
+                pos1 = pos3 - e.clientX;
+                pos2 = pos4 - e.clientY;
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+
+                container.style.top = (container.offsetTop - pos2) + "px";
+                container.style.left = (container.offsetLeft - pos1) + "px";
+                container.style.right = "auto";
+            }
+
+            function closeDragElement() {
+                document.onmouseup = null;
+                document.onmousemove = null;
             }
         }
     }
