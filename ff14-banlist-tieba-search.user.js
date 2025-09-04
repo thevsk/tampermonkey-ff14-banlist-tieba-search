@@ -10,6 +10,8 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @connect      tieba.baidu.com
+// @downloadURL  https://github.com/thevsk/tampermonkey-ff14-banlist-tieba-search/raw/refs/heads/main/ff14-banlist-tieba-search.user.js
+// @updateURL    https://github.com/thevsk/tampermonkey-ff14-banlist-tieba-search/raw/refs/heads/main/ff14-banlist-tieba-search.user.js
 // ==/UserScript==
 
 (function() {
