@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FF14封号名单贴吧查询工具增强版
 // @namespace    https://github.com/thevsk/tampermonkey-ff14-banlist-tieba-search
-// @version      1.6
+// @version      1.11
 // @description  自动查询封号名单中角色在贴吧的相关信息，带有自定义延迟和查询格式功能
 // @author       thevsk
 // @match        https://actff1.web.sdo.com/project/20210621ffviolation/index.html*
@@ -60,12 +60,7 @@
             color: white;
         }
 
-        #tieba-query-clear {
-            background: #f0f0f0;
-            color: #333;
-        }
-
-        #tieba-query-settings {
+        #tieba-query-refresh {
             background: #f0f0f0;
             color: #333;
         }
@@ -172,6 +167,17 @@
             text-decoration: underline;
         }
 
+        /* 新时间样式 */
+        .tieba-result-date {
+            color: #666;
+            font-size: 11px;
+            margin-right: 5px;
+            font-weight: normal;
+            background: #f0f0f0;
+            padding: 1px 4px;
+            border-radius: 2px;
+        }
+
         .query-no-results {
             color: #999;
             font-style: italic;
@@ -216,7 +222,10 @@
             padding: 15px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
             z-index: 10001;
-            width: 450px;
+            width: 500px;
+            max-width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
             color: black;
         }
 
@@ -279,17 +288,69 @@
             background: rgba(0,0,0,0.5);
             z-index: 10000;
         }
+
+        /* 筛选器样式 */
+        .filter-group {
+            margin-bottom: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .filter-group h4 {
+            margin-top: 0;
+            margin-bottom: 8px;
+            color: #4e6ef2;
+            font-size: 14px;
+        }
+
+        .filter-item {
+            margin-bottom: 5px;
+        }
+
+        .filter-item label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .filter-item input {
+            margin-right: 6px;
+        }
+
+        .filter-count {
+            margin-left: 5px;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .select-all-controls {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 8px;
+        }
+
+        .select-all-controls button {
+            padding: 3px 8px;
+            font-size: 12px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            background: #f5f5f5;
+            cursor: pointer;
+        }
     `);
 
     // 工具函数：生成随机延迟
     function getRandomDelay() {
-        const minDelay = GM_getValue('minDelay', 10) * 1000; // 转换为毫秒
-        const maxDelay = GM_getValue('maxDelay', 20) * 1000; // 转换为毫秒
-
+        const minDelay = GM_getValue('minDelay', 10) * 1000;
+        const maxDelay = GM_getValue('maxDelay', 20) * 1000;
         return Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
     }
 
-    // 提取角色信息（名称、服务器、封号原因）
+    // 提取角色信息
     function extractCharacterInfo() {
         const characters = [];
         const elements = document.querySelectorAll('#app > div.viewsWaper > div > div.releTab > div.tabinfo > div');
@@ -313,10 +374,45 @@
         return characters;
     }
 
-    // 查询贴吧信息
+    // 提取所有封号原因并统计数量
+    function extractBanReasonsWithCount() {
+        const reasonCounts = {};
+        const elements = document.querySelectorAll('#app > div.viewsWaper > div > div.releTab > div.tabinfo > div > div:nth-child(3)');
+
+        elements.forEach(element => {
+            if (element.textContent) {
+                const reason = element.textContent.trim();
+                reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+            }
+        });
+
+        // 转换为数组并排序
+        return Object.entries(reasonCounts)
+            .map(([reason, count]) => ({ reason, count }))
+            .sort((a, b) => b.count - a.count);
+    }
+
+    // 提取所有服务器并统计数量
+    function extractServersWithCount() {
+        const serverCounts = {};
+        const elements = document.querySelectorAll('#app > div.viewsWaper > div > div.releTab > div.tabinfo > div > div:nth-child(2)');
+
+        elements.forEach(element => {
+            if (element.textContent) {
+                const server = element.textContent.trim();
+                serverCounts[server] = (serverCounts[server] || 0) + 1;
+            }
+        });
+
+        // 转换为数组并排序
+        return Object.entries(serverCounts)
+            .map(([server, count]) => ({ server, count }))
+            .sort((a, b) => b.count - a.count);
+    }
+
+    // 查询贴吧信息（严格按照提供的选择器提取时间）
     function queryTiebaInfo(characterName, server, queryFormat) {
         return new Promise((resolve) => {
-            // 使用自定义查询格式
             const queryText = queryFormat
                 .replace(/{nickname}/g, characterName)
                 .replace(/{server}/g, server)
@@ -329,11 +425,8 @@
                 url: queryUrl,
                 onload: function(response) {
                     try {
-                        // 创建一个临时DOM元素来解析响应
                         const parser = new DOMParser();
                         const doc = parser.parseFromString(response.responseText, "text/html");
-
-                        // 提取查询结果
                         const results = [];
                         const resultElements = doc.querySelectorAll('div.s_post_list > div');
 
@@ -342,9 +435,20 @@
                             if (linkElem) {
                                 const title = linkElem.textContent;
                                 const href = linkElem.getAttribute('href');
+
+                                // 严格按照提供的选择器路径提取时间
+                                let dateText = '';
+                                const dateElem = resultElem.querySelector('font.p_date');
+                                if (dateElem && dateElem.textContent) {
+                                    // 提取日期部分（YYYY-MM-DD）
+                                    const fullDate = dateElem.textContent.trim();
+                                    dateText = fullDate.substring(0, 10);
+                                }
+
                                 results.push({
                                     title: title,
-                                    url: 'https://tieba.baidu.com' + href
+                                    url: 'https://tieba.baidu.com' + href,
+                                    date: dateText
                                 });
                             }
                         });
@@ -363,10 +467,9 @@
         });
     }
 
-    // 添加结果到显示面板
+    // 添加结果到显示面板（使用新的时间样式）
     function addResultToPanel(characterName, server, reason, results) {
         const resultsContainer = document.getElementById('tieba-query-results');
-
         const resultItem = document.createElement('div');
         resultItem.className = 'query-result-item';
 
@@ -375,13 +478,11 @@
         characterDiv.textContent = `角色: ${characterName}`;
         resultItem.appendChild(characterDiv);
 
-        // 添加服务器信息
         const serverSpan = document.createElement('span');
         serverSpan.className = 'query-result-server';
         serverSpan.textContent = `服务器: ${server}`;
         characterDiv.appendChild(serverSpan);
 
-        // 添加封号原因
         const reasonSpan = document.createElement('span');
         reasonSpan.className = 'query-result-reason';
         reasonSpan.textContent = `封号原因: ${reason}`;
@@ -400,6 +501,14 @@
                 const postDiv = document.createElement('div');
                 postDiv.className = 'query-result-post';
 
+                // 创建时间元素（使用新的样式类）
+                if (result.date) {
+                    const dateSpan = document.createElement('span');
+                    dateSpan.className = 'tieba-result-date';
+                    dateSpan.textContent = `[${result.date}]`;
+                    postDiv.appendChild(dateSpan);
+                }
+
                 const link = document.createElement('a');
                 link.href = result.url;
                 link.target = '_blank';
@@ -412,8 +521,6 @@
 
         resultItem.appendChild(contentDiv);
         resultsContainer.appendChild(resultItem);
-
-        // 滚动到最新结果
         resultsContainer.scrollTop = resultsContainer.scrollHeight;
     }
 
@@ -421,6 +528,65 @@
     function createSettingsModal() {
         const modal = document.createElement('div');
         modal.id = 'settings-modal';
+
+        // 获取所有封号原因及数量
+        const banReasons = extractBanReasonsWithCount();
+        // 获取所有服务器及数量
+        const servers = extractServersWithCount();
+
+        // 生成封号原因筛选HTML
+        let reasonsHTML = '';
+        if (banReasons.length > 0) {
+            reasonsHTML += `
+                <div class="filter-group">
+                    <h4>封号原因筛选:</h4>
+                    <div class="select-all-controls">
+                        <button id="select-all-reasons">全选</button>
+                        <button id="deselect-all-reasons">全不选</button>
+                    </div>
+            `;
+
+            banReasons.forEach(item => {
+                reasonsHTML += `
+                    <div class="filter-item">
+                        <label>
+                            <input type="checkbox" class="ban-reason-checkbox" value="${item.reason}">
+                            ${item.reason}
+                            <span class="filter-count">(${item.count})</span>
+                        </label>
+                    </div>
+                `;
+            });
+
+            reasonsHTML += '</div>';
+        }
+
+        // 生成服务器筛选HTML
+        let serversHTML = '';
+        if (servers.length > 0) {
+            serversHTML += `
+                <div class="filter-group">
+                    <h4>服务器筛选:</h4>
+                    <div class="select-all-controls">
+                        <button id="select-all-servers">全选</button>
+                        <button id="deselect-all-servers">全不选</button>
+                    </div>
+            `;
+
+            servers.forEach(item => {
+                serversHTML += `
+                    <div class="filter-item">
+                        <label>
+                            <input type="checkbox" class="server-checkbox" value="${item.server}">
+                            ${item.server}
+                            <span class="filter-count">(${item.count})</span>
+                        </label>
+                    </div>
+                `;
+            });
+
+            serversHTML += '</div>';
+        }
 
         modal.innerHTML = `
             <h3>查询设置</h3>
@@ -432,6 +598,9 @@
                     <li><code>{banReason}</code> - 封号原因</li>
                 </ul>
             </div>
+
+            ${reasonsHTML}
+            ${serversHTML}
 
             <div class="settings-group">
                 <label for="query-format">查询格式:</label>
@@ -450,13 +619,12 @@
 
             <div id="settings-buttons">
                 <button id="settings-cancel" class="tieba-query-btn">取消</button>
-                <button id="settings-save" class="tieba-query-btn" style="background: #4e6ef2; color: white;">保存</button>
+                <button id="settings-start" class="tieba-query-btn" style="background: #4e6ef2; color: white;">开始查询</button>
             </div>
         `;
 
         document.body.appendChild(modal);
 
-        // 添加背景遮罩
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
         document.body.appendChild(backdrop);
@@ -465,51 +633,113 @@
         const savedFormat = GM_getValue('queryFormat', '{nickname}');
         const minDelay = GM_getValue('minDelay', 10);
         const maxDelay = GM_getValue('maxDelay', 20);
+        const savedReasons = GM_getValue('selectedReasons', banReasons.map(item => item.reason));
+        const savedServers = GM_getValue('selectedServers', servers.map(item => item.server));
 
         document.getElementById('query-format').value = savedFormat;
         document.getElementById('min-delay').value = minDelay;
         document.getElementById('max-delay').value = maxDelay;
 
-        // 添加事件监听
+        // 设置封号原因复选框状态
+        const reasonCheckboxes = modal.querySelectorAll('.ban-reason-checkbox');
+        reasonCheckboxes.forEach(checkbox => {
+            checkbox.checked = savedReasons.includes(checkbox.value);
+        });
+
+        // 设置服务器复选框状态
+        const serverCheckboxes = modal.querySelectorAll('.server-checkbox');
+        serverCheckboxes.forEach(checkbox => {
+            checkbox.checked = savedServers.includes(checkbox.value);
+        });
+
+        // 封号原因全选/全不选按钮事件
+        if (banReasons.length > 0) {
+            document.getElementById('select-all-reasons').addEventListener('click', function() {
+                reasonCheckboxes.forEach(checkbox => {
+                    checkbox.checked = true;
+                });
+            });
+
+            document.getElementById('deselect-all-reasons').addEventListener('click', function() {
+                reasonCheckboxes.forEach(checkbox => {
+                    checkbox.checked = false;
+                });
+            });
+        }
+
+        // 服务器全选/全不选按钮事件
+        if (servers.length > 0) {
+            document.getElementById('select-all-servers').addEventListener('click', function() {
+                serverCheckboxes.forEach(checkbox => {
+                    checkbox.checked = true;
+                });
+            });
+
+            document.getElementById('deselect-all-servers').addEventListener('click', function() {
+                serverCheckboxes.forEach(checkbox => {
+                    checkbox.checked = false;
+                });
+            });
+        }
+
         document.getElementById('settings-cancel').addEventListener('click', function() {
             document.body.removeChild(modal);
             document.body.removeChild(backdrop);
         });
 
-        document.getElementById('settings-save').addEventListener('click', function() {
-            const format = document.getElementById('query-format').value;
-            const minDelay = parseInt(document.getElementById('min-delay').value) || 10;
-            const maxDelay = parseInt(document.getElementById('max-delay').value) || 20;
+        // 返回一个Promise，用于在设置完成后开始查询
+        return new Promise((resolve) => {
+            document.getElementById('settings-start').addEventListener('click', function() {
+                const format = document.getElementById('query-format').value;
+                let minDelay = parseInt(document.getElementById('min-delay').value) || 10;
+                let maxDelay = parseInt(document.getElementById('max-delay').value) || 20;
 
-            // 验证延迟范围
-            if (minDelay < 1) minDelay = 1;
-            if (maxDelay > 60) maxDelay = 60;
-            if (minDelay > maxDelay) {
-                alert('最小延迟不能大于最大延迟');
-                return;
-            }
+                // 获取选中的封号原因
+                const selectedReasons = [];
+                reasonCheckboxes.forEach(checkbox => {
+                    if (checkbox.checked) {
+                        selectedReasons.push(checkbox.value);
+                    }
+                });
 
-            GM_setValue('queryFormat', format);
-            GM_setValue('minDelay', minDelay);
-            GM_setValue('maxDelay', maxDelay);
+                // 获取选中的服务器
+                const selectedServers = [];
+                serverCheckboxes.forEach(checkbox => {
+                    if (checkbox.checked) {
+                        selectedServers.push(checkbox.value);
+                    }
+                });
 
-            document.body.removeChild(modal);
-            document.body.removeChild(backdrop);
+                if (minDelay < 1) minDelay = 1;
+                if (maxDelay > 60) maxDelay = 60;
+                if (minDelay > maxDelay) {
+                    alert('最小延迟不能大于最大延迟');
+                    return;
+                }
+
+                GM_setValue('queryFormat', format);
+                GM_setValue('minDelay', minDelay);
+                GM_setValue('maxDelay', maxDelay);
+                GM_setValue('selectedReasons', selectedReasons);
+                GM_setValue('selectedServers', selectedServers);
+
+                document.body.removeChild(modal);
+                document.body.removeChild(backdrop);
+
+                resolve(); // 解析Promise，表示设置完成
+            });
         });
     }
 
     // 创建查询控制面板
     function createControlPanel() {
-        // 检查是否已存在面板
         if (document.getElementById('tieba-query-panel')) {
             return;
         }
 
-        // 创建顶部固定控制面板
         const panel = document.createElement('div');
         panel.id = 'tieba-query-panel';
 
-        // 创建控制按钮
         const controls = document.createElement('div');
         controls.id = 'tieba-query-controls';
 
@@ -524,22 +754,16 @@
         pauseBtn.textContent = '暂停查询';
         pauseBtn.disabled = true;
 
-        const clearBtn = document.createElement('button');
-        clearBtn.id = 'tieba-query-clear';
-        clearBtn.className = 'tieba-query-btn';
-        clearBtn.textContent = '清除结果';
-
-        const settingsBtn = document.createElement('button');
-        settingsBtn.id = 'tieba-query-settings';
-        settingsBtn.className = 'tieba-query-btn';
-        settingsBtn.textContent = '设置';
+        // 修改：将清除按钮改为刷新页面按钮
+        const refreshBtn = document.createElement('button');
+        refreshBtn.id = 'tieba-query-refresh';
+        refreshBtn.className = 'tieba-query-btn';
+        refreshBtn.textContent = '刷新页面';
 
         controls.appendChild(startBtn);
         controls.appendChild(pauseBtn);
-        controls.appendChild(clearBtn);
-        controls.appendChild(settingsBtn);
+        controls.appendChild(refreshBtn);
 
-        // 创建状态显示区域
         const statusSection = document.createElement('div');
         statusSection.className = 'status-section';
 
@@ -560,11 +784,9 @@
 
         document.body.appendChild(panel);
 
-        // 创建独立的结果容器
         const resultsContainer = document.createElement('div');
         resultsContainer.id = 'tieba-query-results-container';
 
-        // 创建可拖动的标题栏
         const resultsHeader = document.createElement('div');
         resultsHeader.id = 'tieba-query-results-header';
         resultsHeader.textContent = '查询结果';
@@ -578,23 +800,15 @@
         resultsContainer.appendChild(results);
         document.body.appendChild(resultsContainer);
 
-        // 添加事件监听
         let isQuerying = false;
         let currentIndex = 0;
         let characters = [];
         let queryTimeout = null;
 
-        // 设置按钮点击事件
-        settingsBtn.addEventListener('click', createSettingsModal);
-
-        // 更新状态显示
         function updateStatus(text, isWaiting = false, nextCharacter = null) {
             status.innerHTML = text;
-
-            // 更新进度信息
             progress.textContent = `进度: ${currentIndex}/${characters.length}`;
 
-            // 如果是等待状态，显示下一个查询的角色信息
             if (isWaiting && nextCharacter) {
                 const nextInfo = document.createElement('div');
                 nextInfo.className = 'next-query-info';
@@ -603,23 +817,45 @@
             }
         }
 
-        // 开始查询
-        startBtn.addEventListener('click', function() {
+        // 开始查询的实际逻辑
+        function startQuery() {
             if (isQuerying) return;
 
             isQuerying = true;
             startBtn.disabled = true;
             pauseBtn.disabled = false;
 
-            // 获取角色列表
-            characters = extractCharacterInfo();
-            updateStatus(`找到 ${characters.length} 个角色，开始查询...`);
+            // 获取所有角色
+            const allCharacters = extractCharacterInfo();
 
-            // 开始查询过程
+            // 获取选中的封号原因
+            const selectedReasons = GM_getValue('selectedReasons', []);
+            // 获取选中的服务器
+            const selectedServers = GM_getValue('selectedServers', []);
+
+            // 过滤角色：只查询选中的封号原因和服务器
+            characters = allCharacters.filter(char => {
+                const reasonMatch = selectedReasons.length === 0 || selectedReasons.includes(char.reason);
+                const serverMatch = selectedServers.length === 0 || selectedServers.includes(char.server);
+                return reasonMatch && serverMatch;
+            });
+
+            updateStatus(`找到 ${allCharacters.length} 个角色，筛选后 ${characters.length} 个角色，开始查询...`);
+
             startQueryProcess();
+        }
+
+        // 修改：开始按钮点击事件
+        startBtn.addEventListener('click', function() {
+            if (!isQuerying && currentIndex === 0) {
+                // 第一次开始查询，显示设置窗口
+                createSettingsModal().then(startQuery);
+            } else if (!isQuerying && currentIndex > 0) {
+                // 继续查询，直接开始
+                startQuery();
+            }
         });
 
-        // 暂停查询
         pauseBtn.addEventListener('click', function() {
             if (!isQuerying) return;
 
@@ -636,16 +872,12 @@
             updateStatus(`已暂停，已查询 ${currentIndex}/${characters.length} 个角色`);
         });
 
-        // 清除结果
-        clearBtn.addEventListener('click', function() {
-            const resultsContainer = document.getElementById('tieba-query-results');
-            resultsContainer.innerHTML = '';
-            updateStatus('结果已清除');
+        // 修改：刷新页面按钮事件
+        refreshBtn.addEventListener('click', function() {
+            location.reload();
         });
 
-        // 查询处理函数
         async function startQueryProcess() {
-            // 获取查询格式
             const queryFormat = GM_getValue('queryFormat', '{nickname}');
 
             for (; currentIndex < characters.length; currentIndex++) {
@@ -662,13 +894,11 @@
                     updateStatus(`查询 ${character.name} 时出错`);
                 }
 
-                // 如果不是最后一个，添加延迟
                 if (currentIndex < characters.length - 1 && isQuerying) {
                     const delay = getRandomDelay();
                     const nextCharacter = characters[currentIndex + 1];
                     updateStatus(`等待中... ${Math.round(delay/1000)}秒后继续`, true, nextCharacter);
 
-                    // 使用Promise和setTimeout实现可中断的延迟
                     await new Promise(resolve => {
                         queryTimeout = setTimeout(resolve, delay);
                     });
@@ -677,7 +907,6 @@
                 }
             }
 
-            // 查询完成或中断
             isQuerying = false;
             startBtn.disabled = false;
             pauseBtn.disabled = true;
@@ -685,14 +914,13 @@
             if (currentIndex >= characters.length) {
                 updateStatus('查询完成');
                 startBtn.textContent = '重新开始';
-                currentIndex = 0; // 重置索引以便重新开始
+                currentIndex = 0;
             } else {
                 updateStatus(`已暂停，已查询 ${currentIndex}/${characters.length} 个角色`);
                 startBtn.textContent = '继续查询';
             }
         }
 
-        // 可拖动窗口功能
         function initDrag(e) {
             e.preventDefault();
 
@@ -726,7 +954,6 @@
 
     // 初始化
     function init() {
-        // 等待页面加载完成
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', createControlPanel);
         } else {
